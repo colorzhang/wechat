@@ -46,7 +46,7 @@ http://www.mulesoft.org/schema/mule/mongo http://www.mulesoft.org/schema/mule/mo
             <when expression="#[xpath3('//Content',payload) == '3']">
                 <flow-ref name="unRegister"/>
             </when>
-            <when expression="#[xpath3('//Content',payload) == '328']">
+            <when expression="#[xpath3('//Content',payload) == 'xx']">
                 <flow-ref name="checkin"/>
             </when>
             <when expression="#[xpath3('//Content',payload) == '888']">
@@ -104,7 +104,6 @@ http://www.mulesoft.org/schema/mule/mongo http://www.mulesoft.org/schema/mule/mo
                 <mongo:query-attribute key="status">registered</mongo:query-attribute>
             </mongo:query-attributes>
         </mongo:count-objects-using-query-map>
-        <logger message="000000000: #[payload]" level="INFO"/>
 
         <choice>
             <when expression="#[payload == '0']">
@@ -173,7 +172,6 @@ http://www.mulesoft.org/schema/mule/mongo http://www.mulesoft.org/schema/mule/mo
             </mongo:query-attributes>
         </mongo:count-objects-using-query-map>
         <set-session-variable variableName="total" value="#[payload]"/>
-        <logger message="Count --======#[total] #[message.payloadAs(java.lang.String)]" level="INFO"/>
 
         <mongo:count-objects-using-query-map collection="attendees">
             <mongo:query-attributes>
