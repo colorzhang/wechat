@@ -1,0 +1,234 @@
+<?xml version="1.0" encoding="UTF-8"?>
+ 
+<mule xmlns:http="http://www.mulesoft.org/schema/mule/http" 
+xmlns="http://www.mulesoft.org/schema/mule/core"
+    xmlns:spring="http://www.springframework.org/schema/beans"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+xmlns:scripting="http://www.mulesoft.org/schema/mule/scripting"
+xmlns:mxml="http://www.mulesoft.org/schema/mule/xml"
+xmlns:mongo="http://www.mulesoft.org/schema/mule/mongo"
+    xsi:schemaLocation="http://www.springframework.org/schema/beans http://www.springframework.org/schema/beans/spring-beans-current.xsd
+http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+http://www.mulesoft.org/schema/mule/scripting http://www.mulesoft.org/schema/mule/scripting/current/mule-scripting.xsd
+http://www.mulesoft.org/schema/mule/xml http://www.mulesoft.org/schema/mule/xml/current/mule-xml.xsd
+http://www.mulesoft.org/schema/mule/mongo http://www.mulesoft.org/schema/mule/mongo/current/mule-mongo.xsd">
+     
+    <mongo:config name="hybris" username="hybris" database="hybris">
+         <reconnect count="10" frequency="1000"/>
+    </mongo:config>
+
+    <http:listener-config name="HTTP_Listener_Configuration" host="0.0.0.0" port="8988"/>
+   
+   <flow name="wechat_validate_server">
+        <http:listener config-ref="HTTP_Listener_Configuration" path="/wechat" allowedMethods="GET"/>
+	<logger message="Current payload is #[payload] and message id is #[message.id] and uri is #[message.inboundProperties.'http.request.uri']" level="INFO"/>
+        <set-payload value="#[message.inboundProperties.'http.query.params'.echostr]"/>
+    </flow>
+
+
+    <flow name="wechat_message">
+        <http:listener config-ref="HTTP_Listener_Configuration" path="/wechat" allowedMethods="POST"/>
+        <logger message="Current payload is #[message.payloadAs(java.lang.String)] and message id is #[message.id] and uri is #[message.inboundProperties.'http.request.uri']" level="INFO"/>
+
+        <set-session-variable variableName="toUserName" value="#[xpath3('//FromUserName',payload)]"/>
+        <set-session-variable variableName="fromUserName" value="#[xpath3('//ToUserName',payload)]"/>
+        <set-session-variable variableName="createTime" value="#[server.nanoTime()]"/>
+        <set-session-variable variableName="content" value="#[toUserName]"/>
+
+        <choice>
+            <when expression="#[xpath3('//Content',payload) == '1']">
+                <flow-ref name="register"/>
+             </when>
+            <when expression="#[xpath3('//Content',payload) == '2']">
+                <flow-ref name="validate"/>
+            </when>
+            <when expression="#[xpath3('//Content',payload) == '3']">
+                <flow-ref name="unRegister"/>
+            </when>
+            <when expression="#[xpath3('//Content',payload) == '328']">
+                <flow-ref name="checkin"/>
+            </when>
+            <when expression="#[xpath3('//Content',payload) == '888']">
+                <flow-ref name="totalRegister"/>
+            </when>
+            <when expression="#[xpath3('//Event',payload) == 'subscribe']">
+                <flow-ref name="subscribe"/>
+            </when>
+            <otherwise>
+                <set-payload value=""/>
+             </otherwise> 
+        </choice>        
+
+    </flow>
+
+
+    <sub-flow name="register">
+        <mongo:update-objects-by-function-using-map collection="attendees" upsert="true" multi="false" function="$set">
+            <mongo:query-attributes>
+                <mongo:query-attribute key="openID">"#[sessionVars.toUserName]"</mongo:query-attribute>
+            </mongo:query-attributes>
+            <mongo:element-attributes>
+                <mongo:element-attribute key="openID">"#[sessionVars.toUserName]"</mongo:element-attribute>
+                <mongo:element-attribute key="createTime">"#[sessionVars.createTime]"</mongo:element-attribute>
+                <mongo:element-attribute key="status">registered</mongo:element-attribute>
+            </mongo:element-attributes>
+        </mongo:update-objects-by-function-using-map>
+
+        <transformer ref="successRegTextMessage"/>
+    </sub-flow>
+
+    <sub-flow name="validate">
+        <mongo:count-objects-using-query-map collection="attendees">
+            <mongo:query-attributes>
+                <mongo:query-attribute key="openID">"#[sessionVars.toUserName]"</mongo:query-attribute>
+                <mongo:query-attribute key="status">registered</mongo:query-attribute>
+            </mongo:query-attributes>
+        </mongo:count-objects-using-query-map>
+
+        <choice>
+            <when expression="#[payload == '0']">
+                <flow-ref name="notRegister"/>
+            </when>
+            <otherwise>
+                <transformer ref="validateRegTextMessage"/>
+            </otherwise>
+        </choice>
+    </sub-flow>
+
+
+    <sub-flow name="unRegister">
+        <mongo:count-objects-using-query-map collection="attendees">
+            <mongo:query-attributes>
+                <mongo:query-attribute key="openID">"#[sessionVars.toUserName]"</mongo:query-attribute>
+                <mongo:query-attribute key="status">registered</mongo:query-attribute>
+            </mongo:query-attributes>
+        </mongo:count-objects-using-query-map>
+        <logger message="000000000: #[payload]" level="INFO"/>
+
+        <choice>
+            <when expression="#[payload == '0']">
+                <flow-ref name="notRegister"/>
+            </when>
+            <otherwise>
+                <mongo:update-objects-by-function-using-map collection="attendees" upsert="true" multi="false" function="$set">
+                    <mongo:query-attributes>
+                        <mongo:query-attribute key="openID">"#[sessionVars.toUserName]"</mongo:query-attribute>
+                    </mongo:query-attributes>
+                    <mongo:element-attributes>
+                        <mongo:element-attribute key="unregisterTime">"#[sessionVars.createTime]"</mongo:element-attribute>
+                        <mongo:element-attribute key="status">unregistered</mongo:element-attribute>
+                    </mongo:element-attributes>
+                </mongo:update-objects-by-function-using-map>
+
+                <transformer ref="successUnregTextMessage"/>
+            </otherwise>
+        </choice>
+
+    </sub-flow>
+
+    <sub-flow name="notRegister">
+        <transformer ref="notRegTextMessage"/>
+    </sub-flow>
+
+
+    <sub-flow name="checkin">
+        <mongo:count-objects-using-query-map collection="attendees">
+            <mongo:query-attributes>
+                <mongo:query-attribute key="openID">"#[sessionVars.toUserName]"</mongo:query-attribute>
+                <mongo:query-attribute key="status">registered</mongo:query-attribute>
+            </mongo:query-attributes>
+        </mongo:count-objects-using-query-map>
+
+        <choice>
+            <when expression="#[payload == '0']">
+                <flow-ref name="notRegister"/>
+            </when>
+            <otherwise>
+
+        <mongo:update-objects-by-function-using-map collection="attendees" upsert="false" multi="false" function="$set">
+            <mongo:query-attributes>
+                <mongo:query-attribute key="openID">"#[sessionVars.toUserName]"</mongo:query-attribute>
+                <mongo:query-attribute key="status">registered</mongo:query-attribute>
+            </mongo:query-attributes>
+            <mongo:element-attributes>
+                <mongo:element-attribute key="checkedInTime">"#[sessionVars.createTime]"</mongo:element-attribute>
+                <mongo:element-attribute key="checkedIn">true</mongo:element-attribute>
+            </mongo:element-attributes>
+        </mongo:update-objects-by-function-using-map>
+
+                <transformer ref="checkedInTextMessage"/>
+            </otherwise>
+        </choice>
+    </sub-flow>
+
+
+    <sub-flow name="totalRegister">
+        <choice>
+            <when expression="#[xpath3('//FromUserName',payload) == 'ooTl4tzIgrcDWnSF80ofMLuQuLjc']">
+
+        <mongo:count-objects-using-query-map collection="attendees">
+            <mongo:query-attributes>
+                <mongo:query-attribute key="status">registered</mongo:query-attribute>
+            </mongo:query-attributes>
+        </mongo:count-objects-using-query-map>
+        <set-session-variable variableName="total" value="#[payload]"/>
+        <logger message="Count --======#[total] #[message.payloadAs(java.lang.String)]" level="INFO"/>
+
+        <mongo:count-objects-using-query-map collection="attendees">
+            <mongo:query-attributes>
+                <mongo:query-attribute key="status">unregistered</mongo:query-attribute>
+            </mongo:query-attributes>
+        </mongo:count-objects-using-query-map>
+        <set-session-variable variableName="unregister" value="#[payload]"/>
+
+        <mongo:count-objects-using-query-map collection="attendees">
+            <mongo:query-attributes>
+                <mongo:query-attribute key="checkedIn">true</mongo:query-attribute>
+            </mongo:query-attributes>
+        </mongo:count-objects-using-query-map>
+        <set-session-variable variableName="checkedIn" value="#[payload]"/>
+
+        <transformer ref="totalRegTextMessage"/>
+
+            </when>
+            <otherwise>
+                <set-payload value=""/>
+            </otherwise>
+        </choice>
+    </sub-flow>
+
+
+    <sub-flow name="subscribe">
+        <transformer ref="subscribedTextMessage"/>
+    </sub-flow>
+
+
+    <scripting:transformer name="successRegTextMessage">
+        <scripting:script engine="Groovy" file="successRegTextMsg.groovy"/>
+    </scripting:transformer>
+
+    <scripting:transformer name="validateRegTextMessage">
+        <scripting:script engine="Groovy" file="validateRegTextMsg.groovy"/>
+    </scripting:transformer>
+
+    <scripting:transformer name="successUnregTextMessage">
+        <scripting:script engine="Groovy" file="successUnregTextMsg.groovy"/>
+    </scripting:transformer>
+
+    <scripting:transformer name="notRegTextMessage">
+        <scripting:script engine="Groovy" file="notRegTextMsg.groovy"/>
+    </scripting:transformer>
+
+    <scripting:transformer name="totalRegTextMessage">
+        <scripting:script engine="Groovy" file="totalRegTextMsg.groovy"/>
+    </scripting:transformer>
+
+    <scripting:transformer name="checkedInTextMessage">
+        <scripting:script engine="Groovy" file="checkedInTextMsg.groovy"/>
+    </scripting:transformer>
+
+    <scripting:transformer name="subscribedTextMessage">
+        <scripting:script engine="Groovy" file="subscribedTextMsg.groovy"/>
+    </scripting:transformer>
+</mule>
